@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice AI Demo — Venkat Madhav</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0f1a;
+      --surface: #111827;
+      --surface2: #1a2332;
+      --border: rgba(255,255,255,0.08);
+      --text: #f0f4f8;
+      --muted: #8892a0;
+      --accent: #6366f1;
+      --green: #10b981;
+      --red: #ef4444;
+      --amber: #f59e0b;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    .header {
+      padding: 20px 32px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: rgba(255,255,255,0.02);
+    }
+    .header-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .header h1 { font-size: 15px; font-weight: 600; letter-spacing: -0.02em; }
+    .header span { font-size: 12px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+    .header-badge { margin-left: auto; background: rgba(99,102,241,0.15); border: 1px solid rgba(99,102,241,0.3); color: #a5b4fc; font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 20px; }
+
+    /* ── Main layout ── */
+    .main { flex: 1; display: grid; grid-template-columns: 320px 1fr; gap: 0; }
+
+    /* ── Sidebar ── */
+    .sidebar { border-right: 1px solid var(--border); padding: 24px 20px; display: flex; flex-direction: column; gap: 8px; }
+    .sidebar-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 4px; padding: 0 4px; }
+
+    .agent-card {
+      padding: 14px 16px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .agent-card:hover { border-color: rgba(255,255,255,0.15); background: var(--surface2); }
+    .agent-card.active { border-color: var(--accent); background: rgba(99,102,241,0.08); }
+    .agent-card.active.green { border-color: var(--green); background: rgba(16,185,129,0.08); }
+    .agent-header { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+    .agent-icon { font-size: 20px; }
+    .agent-name { font-size: 13px; font-weight: 600; }
+    .agent-desc { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+    .sidebar-divider { height: 1px; background: var(--border); margin: 8px 0; }
+    .sidebar-info { padding: 12px 4px; }
+    .sidebar-info p { font-size: 11px; color: var(--muted); line-height: 1.6; }
+
+    /* ── Content area ── */
+    .content { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; }
+
+    /* ── Voice widget ── */
+    .voice-widget {
+      width: 100%;
+      max-width: 480px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .widget-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .agent-avatar {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      background: rgba(99,102,241,0.15);
+    }
+    .agent-avatar.green { background: rgba(16,185,129,0.15); }
+    .widget-agent-name { font-size: 14px; font-weight: 600; }
+    .widget-status { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 5px; margin-top: 2px; }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+    .status-dot.idle { background: var(--muted); }
+    .status-dot.calling { background: var(--amber); animation: pulse 1s infinite; }
+
+    /* ── Transcript ── */
+    .transcript {
+      padding: 20px 24px;
+      height: 280px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .transcript::-webkit-scrollbar { width: 4px; }
+    .transcript::-webkit-scrollbar-track { background: transparent; }
+    .transcript::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .transcript-empty {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--muted);
+    }
+    .transcript-empty .empty-icon { font-size: 32px; opacity: 0.4; }
+    .transcript-empty p { font-size: 13px; text-align: center; line-height: 1.5; }
+
+    .msg { display: flex; gap: 10px; }
+    .msg.user { flex-direction: row-reverse; }
+    .msg-bubble {
+      max-width: 75%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .msg.agent .msg-bubble { background: var(--surface2); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+    .msg.user .msg-bubble { background: rgba(99,102,241,0.2); border: 1px solid rgba(99,102,241,0.3); border-bottom-right-radius: 4px; color: #c7d2fe; }
+    .msg-label { font-size: 10px; color: var(--muted); margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+
+    /* Typing indicator */
+    .typing { display: flex; align-items: center; gap: 4px; padding: 10px 14px; background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; border-bottom-left-radius: 4px; width: fit-content; }
+    .typing span { width: 6px; height: 6px; background: var(--muted); border-radius: 50%; animation: bounce 1.2s infinite; }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
+
+    /* ── Controls ── */
+    .controls {
+      padding: 16px 24px 20px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Visualizer */
+    .visualizer {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      height: 32px;
+    }
+    .viz-bar {
+      width: 3px;
+      background: var(--accent);
+      border-radius: 2px;
+      height: 4px;
+      transition: height 0.1s;
+    }
+    .viz-bar.active { animation: vizPulse var(--dur, 0.6s) ease-in-out infinite alternate; }
+    @keyframes vizPulse { from{height:4px} to{height:var(--h,20px)} }
+
+    .control-row { display: flex; align-items: center; gap: 10px; }
+
+    .btn-call {
+      flex: 1;
+      padding: 12px;
+      border-radius: 10px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.15s;
+      font-family: 'Inter', sans-serif;
+    }
+    .btn-call.start { background: var(--accent); color: white; }
+    .btn-call.start:hover { background: #4f46e5; transform: translateY(-1px); }
+    .btn-call.start.green { background: var(--green); }
+    .btn-call.start.green:hover { background: #059669; }
+    .btn-call.end { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.3); color: var(--red); }
+    .btn-call.end:hover { background: rgba(239,68,68,0.25); }
+    .btn-call:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .btn-mute {
+      width: 44px; height: 44px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      color: var(--muted);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px;
+      transition: all 0.15s;
+    }
+    .btn-mute:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
+    .btn-mute.muted { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); color: var(--red); }
+
+    /* ── Demo mode banner ── */
+    .demo-banner {
+      background: rgba(245,158,11,0.1);
+      border: 1px solid rgba(245,158,11,0.25);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #fcd34d;
+      line-height: 1.5;
+    }
+    .demo-banner strong { font-weight: 600; }
+
+    /* ── Setup hint ── */
+    .setup-hint {
+      margin-top: 20px;
+      width: 100%;
+      max-width: 480px;
+      background: rgba(99,102,241,0.05);
+      border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 12px;
+      padding: 16px 20px;
+    }
+    .setup-hint h3 { font-size: 13px; font-weight: 600; color: #a5b4fc; margin-bottom: 8px; }
+    .setup-hint ol { padding-left: 18px; }
+    .setup-hint li { font-size: 12px; color: var(--muted); line-height: 1.8; }
+    .setup-hint code { font-family: 'JetBrains Mono', monospace; background: rgba(255,255,255,0.06); padding: 1px 5px; border-radius: 4px; font-size: 11px; color: #c4b5fd; }
+
+    /* ── Call timer ── */
+    .call-timer { font-size: 11px; color: var(--muted); font-family: 'JetBrains Mono', monospace; text-align: center; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-dot"></div>
+  <h1>Voice AI Demo</h1>
+  <span>/ vapi-voice-agent</span>
+  <div class="header-badge">Live Demo</div>
+</div>
+
+<div class="main">
+  <!-- Sidebar: agent selector -->
+  <div class="sidebar">
+    <div class="sidebar-label">Choose Agent</div>
+
+    <div class="agent-card active" id="card-customer-service" onclick="selectAgent('customer-service')">
+      <div class="agent-header">
+        <div class="agent-icon">🎧</div>
+        <div class="agent-name">Customer Support</div>
+      </div>
+      <div class="agent-desc">Orders, returns, billing & complaints for a retail store.</div>
+    </div>
+
+    <div class="agent-card" id="card-appointment-booking" onclick="selectAgent('appointment-booking')">
+      <div class="agent-header">
+        <div class="agent-icon">📅</div>
+        <div class="agent-name">Appointment Booking</div>
+      </div>
+      <div class="agent-desc">Book, reschedule, or cancel appointments at a medical clinic.</div>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-info">
+      <p>Powered by <strong>Vapi AI</strong> + <strong>GPT-4o mini</strong>.<br>
+      Real-time voice • WebRTC • Tool use<br><br>
+      Built as a portfolio demo to showcase agentic voice AI architecture.</p>
+    </div>
+  </div>
+
+  <!-- Main: voice widget -->
+  <div class="content">
+    <div class="voice-widget" id="widget">
+      <div class="widget-header">
+        <div class="agent-avatar" id="widget-avatar">🎧</div>
+        <div>
+          <div class="widget-agent-name" id="widget-name">Aria — Customer Support</div>
+          <div class="widget-status">
+            <div class="status-dot idle" id="status-dot"></div>
+            <span id="status-text">Ready</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="transcript" id="transcript">
+        <div class="transcript-empty" id="transcript-empty">
+          <div class="empty-icon">🎙️</div>
+          <p>Press <strong>Start Call</strong> to begin a voice conversation<br>with the AI agent.</p>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="visualizer" id="visualizer">
+          <!-- Bars injected by JS -->
+        </div>
+
+        <div id="demo-banner-container"></div>
+
+        <div class="control-row">
+          <button class="btn-call start" id="btn-call" onclick="toggleCall()">
+            <span id="btn-icon">📞</span>
+            <span id="btn-text">Start Call</span>
+          </button>
+          <button class="btn-mute" id="btn-mute" onclick="toggleMute()" title="Mute/unmute" disabled>🎤</button>
+        </div>
+
+        <div class="call-timer" id="call-timer" style="display:none">00:00</div>
+      </div>
+    </div>
+
+    <div class="setup-hint" id="setup-hint" style="display:none">
+      <h3>⚡ Add your Vapi key to go live</h3>
+      <ol>
+        <li>Get a free key at <code>vapi.ai</code> → Dashboard → API Keys</li>
+        <li>Edit <code>.env</code> → set <code>VAPI_PUBLIC_KEY=your_key</code></li>
+        <li>Restart the server: <code>npm start</code></li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<!-- Vapi Web SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/dist/vapi.umd.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
