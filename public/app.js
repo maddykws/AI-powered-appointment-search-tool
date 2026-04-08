@@ -1,5 +1,5 @@
-// ── State ─────────────────────────────────────────────────────────────────────
-const API_BASE = 'http://localhost:3335';
+// ── Config ────────────────────────────────────────────────────────────────────
+const API_BASE = window.location.origin; // same origin — works standalone or iframe
 
 let vapi = null;
 let activeAgent = 'customer-service';
@@ -7,119 +7,65 @@ let callActive = false;
 let muted = false;
 let callStartTime = null;
 let timerInterval = null;
-let config = null;
 
 const AGENTS = {
-  'customer-service': {
-    name: 'Aria — Customer Support',
-    icon: '🎧',
-    color: '#6366f1',
-    colorClass: '',
-  },
-  'appointment-booking': {
-    name: 'Max — Appointment Scheduler',
-    icon: '📅',
-    color: '#10b981',
-    colorClass: 'green',
-  },
+  'customer-service': { name: 'Aria — Customer Support', icon: '🎧', colorClass: '' },
+  'appointment-booking': { name: 'Max — Appointment Scheduler', icon: '📅', colorClass: 'green' },
 };
 
-// ── Init ──────────────────────────────────────────────────────────────────────
+// ── Vapi Init ─────────────────────────────────────────────────────────────────
 
-async function init() {
-  buildVisualizer();
-
+async function initVapi() {
   try {
     const res = await fetch(`${API_BASE}/api/config`);
-    config = await res.json();
-  } catch {
-    config = { configured: false, demo_mode: true };
-  }
+    const cfg = await res.json();
 
-  if (!config.configured) {
-    document.getElementById('setup-hint').style.display = 'block';
-    showDemoBanner();
-  } else {
-    // Init Vapi SDK
-    vapi = new Vapi(config.publicKey);
-    bindVapiEvents();
-  }
-}
-
-function showDemoBanner() {
-  const container = document.getElementById('demo-banner-container');
-  container.innerHTML = `
-    <div class="demo-banner">
-      <strong>Demo mode</strong> — Vapi key not configured.
-      Add your key to <code>.env</code> to enable live voice calls.
-    </div>`;
-}
-
-// ── Visualizer ────────────────────────────────────────────────────────────────
-
-function buildVisualizer() {
-  const viz = document.getElementById('visualizer');
-  viz.innerHTML = '';
-  const heights = [8,14,20,28,20,32,20,28,20,14,8,20,28,14,8];
-  const durations = [0.5,0.7,0.4,0.6,0.8,0.5,0.7,0.4,0.6,0.8,0.5,0.6,0.4,0.7,0.5];
-  heights.forEach((h, i) => {
-    const bar = document.createElement('div');
-    bar.className = 'viz-bar';
-    bar.style.setProperty('--h', `${h}px`);
-    bar.style.setProperty('--dur', `${durations[i]}s`);
-    bar.dataset.idx = i;
-    viz.appendChild(bar);
-  });
-}
-
-function setVisualizerActive(active) {
-  document.querySelectorAll('.viz-bar').forEach(bar => {
-    bar.classList.toggle('active', active);
-  });
-}
-
-function setVisualizerSpeaking(isSpeaking) {
-  const bars = document.querySelectorAll('.viz-bar');
-  bars.forEach((bar, i) => {
-    if (isSpeaking) {
-      bar.classList.add('active');
-      const h = 8 + Math.random() * 28;
-      bar.style.setProperty('--h', `${h}px`);
-      bar.style.setProperty('--dur', `${0.3 + Math.random() * 0.5}s`);
-    } else {
-      bar.style.setProperty('--h', `4px`);
+    if (!cfg.configured) {
+      document.getElementById('setup-hint').style.display = 'block';
+      document.getElementById('demo-banner-container').innerHTML = `
+        <div class="demo-banner"><strong>Demo mode</strong> — Add VAPI_PUBLIC_KEY to .env to enable live calls.</div>`;
+      return;
     }
-  });
+
+    // VapiSDK is set by the IIFE bundle at the top of vapi-bundle.js
+    // The CJS→ESM interop can double-wrap: VapiSDK.default.default is the class
+    const VapiClass = VapiSDK?.default?.default ?? VapiSDK?.default ?? VapiSDK?.Vapi ?? VapiSDK;
+    if (typeof VapiClass !== 'function') {
+      console.error('Vapi class not found in bundle. VapiSDK =', VapiSDK);
+      return;
+    }
+
+    vapi = new VapiClass(cfg.publicKey);
+    console.log('✅ Vapi initialized with key:', cfg.publicKey.slice(0, 8) + '...');
+
+    vapi.on('call-start', () => {
+      setCallState('active');
+      addMessage('system', '✅ Call connected — speak now');
+    });
+    vapi.on('call-end', () => {
+      setCallState('idle');
+      addMessage('system', '📵 Call ended');
+      setVisualizerActive(false);
+    });
+    vapi.on('speech-start', () => setVisualizerActive(true));
+    vapi.on('speech-end',   () => setVisualizerActive(false));
+    vapi.on('message', (msg) => {
+      if (msg.type !== 'transcript' || msg.transcriptType !== 'final') return;
+      if (msg.role === 'assistant') { removeTyping(); addMessage('agent', msg.transcript); }
+      else if (msg.role === 'user') { addMessage('user', msg.transcript); showTyping(); }
+    });
+    vapi.on('error', (err) => {
+      console.error('Vapi error:', err);
+      addMessage('system', `❌ ${err?.message || JSON.stringify(err)}`);
+      setCallState('idle');
+    });
+
+  } catch (err) {
+    console.error('Vapi init failed:', err);
+  }
 }
 
-// ── Agent selection ───────────────────────────────────────────────────────────
-
-function selectAgent(id) {
-  if (callActive) return; // can't switch mid-call
-  activeAgent = id;
-  const agent = AGENTS[id];
-
-  // Update sidebar cards
-  document.querySelectorAll('.agent-card').forEach(c => c.classList.remove('active'));
-  const card = document.getElementById(`card-${id}`);
-  card.classList.add('active');
-  if (agent.colorClass) card.classList.add(agent.colorClass);
-
-  // Update widget header
-  const avatar = document.getElementById('widget-avatar');
-  avatar.textContent = agent.icon;
-  avatar.className = `agent-avatar ${agent.colorClass}`;
-  document.getElementById('widget-name').textContent = agent.name;
-
-  // Update call button color
-  const btn = document.getElementById('btn-call');
-  btn.className = `btn-call start ${agent.colorClass}`;
-
-  // Clear transcript
-  clearTranscript();
-}
-
-// ── Call control ──────────────────────────────────────────────────────────────
+// ── Call Control ──────────────────────────────────────────────────────────────
 
 async function toggleCall() {
   if (!callActive) await startCall();
@@ -127,20 +73,18 @@ async function toggleCall() {
 }
 
 async function startCall() {
-  if (!config.configured) {
-    addMessage('system', '⚠️ Vapi key not configured. Add VAPI_PUBLIC_KEY to .env and restart the server.');
+  if (!vapi) {
+    addMessage('system', '⚠️ Vapi not ready. Check server logs.');
     return;
   }
 
   setCallState('connecting');
 
   try {
-    // Fetch assistant config from our backend
     const res = await fetch(`${API_BASE}/api/assistant/${activeAgent}`);
     const assistant = await res.json();
 
-    // Start Vapi call with inline assistant config
-    await vapi.start({
+    vapi.start({
       model: {
         provider: assistant.model.provider,
         model: assistant.model.model,
@@ -153,11 +97,11 @@ async function startCall() {
       firstMessage: assistant.firstMessage,
       silenceTimeoutSeconds: 30,
       maxDurationSeconds: 300,
-      endCallMessage: 'Thank you for calling. Goodbye!',
     });
+
   } catch (err) {
     console.error('Start call failed:', err);
-    addMessage('system', `❌ Failed to start call: ${err.message}`);
+    addMessage('system', `❌ ${err.message}`);
     setCallState('idle');
   }
 }
@@ -167,6 +111,8 @@ function endCall() {
   setCallState('idle');
 }
 
+window.toggleCall = toggleCall;
+
 function toggleMute() {
   if (!vapi || !callActive) return;
   muted = !muted;
@@ -175,53 +121,87 @@ function toggleMute() {
   btn.textContent = muted ? '🔇' : '🎤';
   btn.classList.toggle('muted', muted);
 }
+window.toggleMute = toggleMute;
 
-// ── UI state ──────────────────────────────────────────────────────────────────
+// ── Agent Selection ───────────────────────────────────────────────────────────
+
+function selectAgent(id) {
+  if (callActive) return;
+  activeAgent = id;
+  const agent = AGENTS[id];
+
+  document.querySelectorAll('.agent-card').forEach(c => c.classList.remove('active', 'green'));
+  const card = document.getElementById(`card-${id}`);
+  card.classList.add('active');
+  if (agent.colorClass) card.classList.add(agent.colorClass);
+
+  document.getElementById('widget-avatar').textContent = agent.icon;
+  document.getElementById('widget-avatar').className = `agent-avatar ${agent.colorClass}`;
+  document.getElementById('widget-name').textContent = agent.name;
+  document.getElementById('btn-call').className = `btn-call start ${agent.colorClass}`;
+
+  clearTranscript();
+}
+window.selectAgent = selectAgent;
+
+// ── UI State ──────────────────────────────────────────────────────────────────
 
 function setCallState(state) {
-  const dot = document.getElementById('status-dot');
-  const statusText = document.getElementById('status-text');
-  const btnCall = document.getElementById('btn-call');
-  const btnIcon = document.getElementById('btn-icon');
-  const btnText = document.getElementById('btn-text');
-  const btnMute = document.getElementById('btn-mute');
-  const timer = document.getElementById('call-timer');
-  const agent = AGENTS[activeAgent];
+  const dot      = document.getElementById('status-dot');
+  const statusTx = document.getElementById('status-text');
+  const btnCall  = document.getElementById('btn-call');
+  const btnIcon  = document.getElementById('btn-icon');
+  const btnText  = document.getElementById('btn-text');
+  const btnMute  = document.getElementById('btn-mute');
+  const timer    = document.getElementById('call-timer');
+  const agent    = AGENTS[activeAgent];
 
   if (state === 'idle') {
     callActive = false;
     dot.className = 'status-dot idle';
-    statusText.textContent = 'Ready';
+    statusTx.textContent = 'Ready';
     btnCall.className = `btn-call start ${agent.colorClass}`;
     btnCall.disabled = false;
     btnIcon.textContent = '📞';
     btnText.textContent = 'Start Call';
     btnMute.disabled = true;
     setVisualizerActive(false);
-    stopTimer();
-    timer.style.display = 'none';
-    muted = false;
-    btnMute.textContent = '🎤';
-    btnMute.classList.remove('muted');
+    stopTimer(); timer.style.display = 'none';
+    muted = false; btnMute.textContent = '🎤'; btnMute.classList.remove('muted');
   } else if (state === 'connecting') {
     dot.className = 'status-dot calling';
-    statusText.textContent = 'Connecting...';
+    statusTx.textContent = 'Connecting...';
     btnCall.disabled = true;
-    btnText.textContent = 'Connecting...';
-    btnIcon.textContent = '⏳';
+    btnIcon.textContent = '⏳'; btnText.textContent = 'Connecting...';
   } else if (state === 'active') {
     callActive = true;
     dot.className = 'status-dot';
-    statusText.textContent = 'In call';
+    statusTx.textContent = 'In call';
     btnCall.className = 'btn-call end';
     btnCall.disabled = false;
-    btnIcon.textContent = '📵';
-    btnText.textContent = 'End Call';
+    btnIcon.textContent = '📵'; btnText.textContent = 'End Call';
     btnMute.disabled = false;
     setVisualizerActive(true);
-    startTimer();
-    timer.style.display = 'block';
+    startTimer(); timer.style.display = 'block';
   }
+}
+
+// ── Visualizer ────────────────────────────────────────────────────────────────
+
+function buildVisualizer() {
+  const viz = document.getElementById('visualizer');
+  viz.innerHTML = '';
+  [8,14,20,28,20,32,20,28,20,14,8,20,28,14,8].forEach((h, i) => {
+    const bar = document.createElement('div');
+    bar.className = 'viz-bar';
+    bar.style.setProperty('--h', `${h}px`);
+    bar.style.setProperty('--dur', `${[0.5,0.7,0.4,0.6,0.8,0.5,0.7,0.4,0.6,0.8,0.5,0.6,0.4,0.7,0.5][i]}s`);
+    viz.appendChild(bar);
+  });
+}
+
+function setVisualizerActive(on) {
+  document.querySelectorAll('.viz-bar').forEach(b => b.classList.toggle('active', on));
 }
 
 // ── Timer ─────────────────────────────────────────────────────────────────────
@@ -229,26 +209,19 @@ function setCallState(state) {
 function startTimer() {
   callStartTime = Date.now();
   timerInterval = setInterval(() => {
-    const elapsed = Math.floor((Date.now() - callStartTime) / 1000);
-    const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
-    const s = String(elapsed % 60).padStart(2, '0');
-    document.getElementById('call-timer').textContent = `${m}:${s}`;
+    const s = Math.floor((Date.now() - callStartTime) / 1000);
+    document.getElementById('call-timer').textContent =
+      `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
   }, 1000);
 }
-
-function stopTimer() {
-  clearInterval(timerInterval);
-  timerInterval = null;
-  callStartTime = null;
-}
+function stopTimer() { clearInterval(timerInterval); timerInterval = null; }
 
 // ── Transcript ────────────────────────────────────────────────────────────────
 
 let typingEl = null;
 
 function clearTranscript() {
-  const t = document.getElementById('transcript');
-  t.innerHTML = `
+  document.getElementById('transcript').innerHTML = `
     <div class="transcript-empty" id="transcript-empty">
       <div class="empty-icon">🎙️</div>
       <p>Press <strong>Start Call</strong> to begin a voice conversation<br>with the AI agent.</p>
@@ -256,30 +229,26 @@ function clearTranscript() {
 }
 
 function hideEmpty() {
-  const el = document.getElementById('transcript-empty');
-  if (el) el.remove();
+  document.getElementById('transcript-empty')?.remove();
+}
+
+function removeTyping() {
+  if (typingEl) { typingEl.remove(); typingEl = null; }
 }
 
 function addMessage(role, text) {
-  hideEmpty();
-  removeTyping();
+  hideEmpty(); removeTyping();
   const t = document.getElementById('transcript');
-  const msg = document.createElement('div');
-  msg.className = `msg ${role}`;
-  const agent = AGENTS[activeAgent];
-  const label = role === 'agent' ? agent.name.split('—')[0].trim() : role === 'user' ? 'You' : 'System';
-  msg.innerHTML = `
-    <div>
-      <div class="msg-bubble">${escapeHtml(text)}</div>
-      <div class="msg-label">${label}</div>
-    </div>`;
-  t.appendChild(msg);
+  const label = role === 'agent' ? AGENTS[activeAgent].name.split('—')[0].trim() : role === 'user' ? 'You' : 'System';
+  const el = document.createElement('div');
+  el.className = `msg ${role}`;
+  el.innerHTML = `<div><div class="msg-bubble">${text.replace(/</g,'&lt;')}</div><div class="msg-label">${label}</div></div>`;
+  t.appendChild(el);
   t.scrollTop = t.scrollHeight;
 }
 
 function showTyping() {
-  hideEmpty();
-  removeTyping();
+  hideEmpty(); removeTyping();
   const t = document.getElementById('transcript');
   typingEl = document.createElement('div');
   typingEl.className = 'msg agent';
@@ -288,57 +257,7 @@ function showTyping() {
   t.scrollTop = t.scrollHeight;
 }
 
-function removeTyping() {
-  if (typingEl) { typingEl.remove(); typingEl = null; }
-}
-
-function escapeHtml(str) {
-  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-// ── Vapi events ───────────────────────────────────────────────────────────────
-
-function bindVapiEvents() {
-  vapi.on('call-start', () => {
-    setCallState('active');
-    addMessage('system', '✅ Call connected');
-  });
-
-  vapi.on('call-end', () => {
-    setCallState('idle');
-    addMessage('system', '📵 Call ended');
-    setVisualizerSpeaking(false);
-  });
-
-  vapi.on('speech-start', () => {
-    setVisualizerSpeaking(true);
-  });
-
-  vapi.on('speech-end', () => {
-    setVisualizerSpeaking(false);
-  });
-
-  vapi.on('message', (msg) => {
-    if (msg.type === 'transcript') {
-      if (msg.transcriptType === 'final') {
-        if (msg.role === 'assistant') {
-          removeTyping();
-          addMessage('agent', msg.transcript);
-        } else if (msg.role === 'user') {
-          addMessage('user', msg.transcript);
-          showTyping();
-        }
-      }
-    }
-  });
-
-  vapi.on('error', (err) => {
-    console.error('Vapi error:', err);
-    addMessage('system', `❌ Error: ${err.message || JSON.stringify(err)}`);
-    setCallState('idle');
-  });
-}
-
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
-init();
+buildVisualizer();
+initVapi();

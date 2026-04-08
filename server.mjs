@@ -1,10 +1,14 @@
-import 'dotenv/config';
+import { config as dotenvConfig } from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+// Resolve .env relative to server.mjs regardless of CWD
+const __dotenvDir = dirname(fileURLToPath(import.meta.url));
+dotenvConfig({ path: join(__dotenvDir, '.env') });
+
+const __dirname = __dotenvDir;
 const app = express();
 const PORT = process.env.PORT || 3335;
 
